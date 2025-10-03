@@ -15,12 +15,11 @@ os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 def download_from_gofile(photo_id, bearer, filename, filepath):
     """
-    Get the real file link from GoFile API (anonymous uploads with guest token) and download it.
+    Get the real file link from GoFile API (guest token) and download it.
     """
     try:
-        api_url = f"https://api.gofile.io/contents/{photo_id}"
-        headers = {"Authorization": f"Bearer {bearer}"}
-        resp = requests.get(api_url, headers=headers, timeout=30)
+        api_url = f"https://api.gofile.io/getContent?contentId={photo_id}&token={bearer}"
+        resp = requests.get(api_url, timeout=30)
 
         try:
             data = resp.json()
@@ -32,13 +31,17 @@ def download_from_gofile(photo_id, bearer, filename, filepath):
         if data.get("status") == "ok":
             contents = data["data"]["contents"]
             if not contents:
-                print(f"⚠️ No files found in folder {photo_id}")
+                print(f"⚠️ No files found for {photo_id}")
                 return False
 
-            # Download ALL files in this folder
+            # Download ALL image files
             for file_id, file_info in contents.items():
                 direct_url = file_info["link"]
                 real_name = file_info["name"]
+
+                # Only download image formats
+                if not real_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                    continue
 
                 save_path = os.path.join(IMAGE_FOLDER, real_name)
                 if not os.path.exists(save_path):
@@ -78,21 +81,18 @@ def sync_images():
             continue
 
         if status == "active":
-            # Track active files by asking GoFile what’s inside the folder
-            api_url = f"https://api.gofile.io/contents/{photo_id}"
-            resp = requests.get(api_url, headers={"Authorization": f"Bearer {bearer}"}, timeout=30)
-            try:
-                data_info = resp.json()
-                if data_info.get("status") == "ok":
-                    for file_id, file_info in data_info["data"]["contents"].items():
-                        active_files.append(file_info["name"])
-                else:
-                    print(f"⚠️ API error when checking active files for {photo_id}: {data_info}")
-            except:
-                print("⚠️ Could not parse GoFile folder info.")
-            
-            # Download files
-            download_from_gofile(photo_id, bearer, photo_id, IMAGE_FOLDER)
+            success = download_from_gofile(photo_id, bearer, photo_id, IMAGE_FOLDER)
+            if success:
+                # Re-fetch file names from GoFile
+                api_url = f"https://api.gofile.io/getContent?contentId={photo_id}&token={bearer}"
+                resp = requests.get(api_url, timeout=30)
+                try:
+                    info = resp.json()
+                    if info.get("status") == "ok":
+                        for file_id, file_info in info["data"]["contents"].items():
+                            active_files.append(file_info["name"])
+                except:
+                    pass
         else:
             print(f"🗑️ Skipping inactive entry {photo_id}")
 
