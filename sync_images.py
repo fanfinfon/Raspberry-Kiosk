@@ -1,6 +1,7 @@
 import os
 import requests
 import redis
+import json
 from dotenv import load_dotenv
 
 # Load Redis URL
@@ -12,14 +13,14 @@ IMAGE_FOLDER = "/home/caglar/Desktop/Kiosk/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 def sync_images():
-    images_data = r.hgetall("image")  # Assuming Redis hash key = "image"
+    # Get all items in the Redis list "images"
+    images_data = r.lrange("images", 0, -1)  # returns list of bytes
     active_files = []
 
-    for key, value in images_data.items():
+    for item in images_data:
         try:
-            # Assuming Redis stores like: {"url":"http://...","status":"active"}
-            data = eval(value.decode())  
-            url = data.get("url")
+            data = json.loads(item.decode())  # parse JSON string
+            url = data.get("photo_url")
             status = data.get("status")
             filename = os.path.basename(url)
             filepath = os.path.join(IMAGE_FOLDER, filename)
@@ -38,12 +39,13 @@ def sync_images():
                     os.remove(filepath)
 
         except Exception as e:
-            print(f"Error processing {key}: {e}")
+            print(f"Error processing item: {e}")
 
-    # Remove files not in active list
+    # Remove files that are not active anymore
     for f in os.listdir(IMAGE_FOLDER):
         if f not in active_files:
             os.remove(os.path.join(IMAGE_FOLDER, f))
 
 if __name__ == "__main__":
     sync_images()
+
