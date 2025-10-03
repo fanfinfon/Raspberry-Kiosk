@@ -13,32 +13,42 @@ r = redis.from_url(REDIS_URL)
 IMAGE_FOLDER = "/home/caglar/Desktop/Kiosk/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-def download_from_gofile(photo_id, bearer, filename, filepath):
+def download_from_gofile(photo_id, filename, filepath):
     """
-    Get the real file link from GoFile API and download it.
+    Get the real file link from GoFile API (public folder) and download it.
     """
     try:
-        api_url = f"https://api.gofile.io/getContent?contentId={photo_id}&token={bearer}"
+        api_url = f"https://api.gofile.io/contents/{photo_id}"
         resp = requests.get(api_url, timeout=30)
-        data = resp.json()
+
+        try:
+            data = resp.json()
+        except Exception:
+            print(f"⚠️ GoFile API returned non-JSON for {photo_id}")
+            print("Response text was:\n", resp.text[:300])
+            return False
 
         if data.get("status") == "ok":
-            files = data["data"]["contents"]
-            if not files:
-                print(f"⚠️ No files found for {photo_id}")
+            contents = data["data"]["contents"]
+            if not contents:
+                print(f"⚠️ No files found in folder {photo_id}")
                 return False
 
-            first_file = next(iter(files.values()))
-            direct_url = first_file["link"]
+            # Download ALL files in this folder
+            for file_id, file_info in contents.items():
+                direct_url = file_info["link"]
+                real_name = file_info["name"]
 
-            print(f"⬇️ Downloading {filename} from {direct_url}...")
-            img_resp = requests.get(direct_url, timeout=30)
-            if img_resp.status_code == 200:
-                with open(filepath, "wb") as f:
-                    f.write(img_resp.content)
-                return True
-            else:
-                print(f"❌ Failed to download {filename}, status {img_resp.status_code}")
+                save_path = os.path.join(IMAGE_FOLDER, real_name)
+                if not os.path.exists(save_path):
+                    print(f"⬇️ Downloading {real_name} from {direct_url}...")
+                    img_resp = requests.get(direct_url, timeout=30)
+                    if img_resp.status_code == 200:
+                        with open(save_path, "wb") as f:
+                            f.write(img_resp.content)
+                    else:
+                        print(f"❌ Failed to download {real_name}, status {img_resp.status_code}")
+            return True
         else:
             print(f"❌ GoFile API error for {photo_id}: {data}")
     except Exception as e:
@@ -58,30 +68,33 @@ def sync_images():
             print("Raw data was:\n", item.decode())
             continue
 
-        url = data.get("photo_url")
         photo_id = data.get("photo_id")
-        bearer = data.get("photo_bearer")
         status = data.get("status")
 
-        if not url or not photo_id or not bearer:
-            print("⚠️ Missing fields in entry, skipping...")
+        if not photo_id:
+            print("⚠️ Missing photo_id, skipping...")
             continue
 
-        filename = os.path.basename(url)
-        filepath = os.path.join(IMAGE_FOLDER, filename)
-
         if status == "active":
-            active_files.append(filename)
-            if not os.path.exists(filepath):
-                success = download_from_gofile(photo_id, bearer, filename, filepath)
-                if not success:
-                    print(f"⚠️ Could not download {filename}")
+            # This adds all file names from GoFile into the active list
+            api_url = f"https://api.gofile.io/contents/{photo_id}"
+            resp = requests.get(api_url, timeout=30)
+            try:
+                data_info = resp.json()
+                if data_info.get("status") == "ok":
+                    for file_id, file_info in data_info["data"]["contents"].items():
+                        active_files.append(file_info["name"])
+                else:
+                    print(f"⚠️ API error when checking active files for {photo_id}")
+            except:
+                print("⚠️ Could not parse GoFile folder info.")
+            
+            # Download files
+            download_from_gofile(photo_id, photo_id, IMAGE_FOLDER)
         else:
-            if os.path.exists(filepath):
-                print(f"🗑️ Deleting {filename} (inactive)...")
-                os.remove(filepath)
+            print(f"🗑️ Skipping inactive entry {photo_id}")
 
-    # Cleanup: remove local files not active anymore
+    # Cleanup: remove local files not in active list
     for f in os.listdir(IMAGE_FOLDER):
         if f not in active_files:
             print(f"🗑️ Cleaning up old file {f}")
