@@ -13,13 +13,14 @@ r = redis.from_url(REDIS_URL)
 IMAGE_FOLDER = "/home/caglar/Desktop/Kiosk/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-def download_from_gofile(photo_id, filename, filepath):
+def download_from_gofile(photo_id, bearer, filename, filepath):
     """
-    Get the real file link from GoFile API (public folder) and download it.
+    Get the real file link from GoFile API (anonymous uploads with guest token) and download it.
     """
     try:
         api_url = f"https://api.gofile.io/contents/{photo_id}"
-        resp = requests.get(api_url, timeout=30)
+        headers = {"Authorization": f"Bearer {bearer}"}
+        resp = requests.get(api_url, headers=headers, timeout=30)
 
         try:
             data = resp.json()
@@ -69,28 +70,29 @@ def sync_images():
             continue
 
         photo_id = data.get("photo_id")
+        bearer = data.get("photo_bearer")
         status = data.get("status")
 
-        if not photo_id:
-            print("⚠️ Missing photo_id, skipping...")
+        if not photo_id or not bearer:
+            print("⚠️ Missing photo_id or bearer, skipping...")
             continue
 
         if status == "active":
-            # This adds all file names from GoFile into the active list
+            # Track active files by asking GoFile what’s inside the folder
             api_url = f"https://api.gofile.io/contents/{photo_id}"
-            resp = requests.get(api_url, timeout=30)
+            resp = requests.get(api_url, headers={"Authorization": f"Bearer {bearer}"}, timeout=30)
             try:
                 data_info = resp.json()
                 if data_info.get("status") == "ok":
                     for file_id, file_info in data_info["data"]["contents"].items():
                         active_files.append(file_info["name"])
                 else:
-                    print(f"⚠️ API error when checking active files for {photo_id}")
+                    print(f"⚠️ API error when checking active files for {photo_id}: {data_info}")
             except:
                 print("⚠️ Could not parse GoFile folder info.")
             
             # Download files
-            download_from_gofile(photo_id, photo_id, IMAGE_FOLDER)
+            download_from_gofile(photo_id, bearer, photo_id, IMAGE_FOLDER)
         else:
             print(f"🗑️ Skipping inactive entry {photo_id}")
 
