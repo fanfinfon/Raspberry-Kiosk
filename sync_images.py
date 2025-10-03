@@ -1,7 +1,7 @@
 import os
 import requests
 import redis
-import json
+import ast   # <-- use ast to parse python-style dicts
 from dotenv import load_dotenv
 
 # Load Redis URL
@@ -19,7 +19,9 @@ def sync_images():
 
     for item in images_data:
         try:
-            data = json.loads(item.decode())  # parse JSON string
+            # Redis stored value looks like Python dict, not JSON
+            data = ast.literal_eval(item.decode())
+            
             url = data.get("photo_url")
             status = data.get("status")
             filename = os.path.basename(url)
@@ -48,4 +50,3 @@ def sync_images():
 
 if __name__ == "__main__":
     sync_images()
-
