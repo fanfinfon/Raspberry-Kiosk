@@ -26,7 +26,7 @@ def install_cronjob():
         new_cron = current_cron + job
         process = subprocess.run(["crontab"], input=new_cron, text=True)
         if process.returncode == 0:
-            print("✅ Cronjob installed (runs every 5 minutes).")a
+            print("✅ Cronjob installed (runs every 5 minutes).")
         else:
             print("❌ Failed to install cronjob.")
     else:
