@@ -5,14 +5,15 @@ import subprocess
 PROJECT_DIR = "/home/caglar/Desktop/Kiosk"
 IMAGE_DIR = os.path.join(PROJECT_DIR, "images")
 SYNC_SCRIPT = os.path.join(PROJECT_DIR, "sync_images.py")
+KIOSK_SCRIPT = os.path.join(PROJECT_DIR, "kiosk.py")
 PYTHON = "/usr/bin/python3"
 
 def create_image_folder():
     if not os.path.exists(IMAGE_DIR):
         os.makedirs(IMAGE_DIR)
-        print(f"Created folder: {IMAGE_DIR}")
+        print(f"📁 Created folder: {IMAGE_DIR}")
     else:
-        print(f"Folder already exists: {IMAGE_DIR}")
+        print(f"📁 Folder already exists: {IMAGE_DIR}")
 
 def install_cronjob():
     job = f"*/5 * * * * {PYTHON} {SYNC_SCRIPT}\n"
@@ -33,11 +34,17 @@ def install_cronjob():
         print("ℹ️ Cronjob already exists.")
 
 def run_first_sync():
-    print("Running first sync...")
+    print("🔄 Running first sync...")
     subprocess.run([PYTHON, SYNC_SCRIPT])
+
+def start_slideshow():
+    print("🎬 Starting slideshow (kiosk.py)...")
+    # Run kiosk.py in background so setup.py doesn't block
+    subprocess.Popen([PYTHON, KIOSK_SCRIPT])
 
 if __name__ == "__main__":
     create_image_folder()
     install_cronjob()
     run_first_sync()
-    print("🎉 Setup complete! Now run kiosk.py to start the slideshow.")
+    print("🎉 Setup complete!")
+    start_slideshow()
