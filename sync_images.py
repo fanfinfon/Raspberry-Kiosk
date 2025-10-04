@@ -3,6 +3,7 @@ import requests
 import redis
 import json
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load Redis URL
 load_dotenv()
@@ -13,54 +14,50 @@ r = redis.from_url(REDIS_URL)
 IMAGE_FOLDER = "/home/caglar/Desktop/Kiosk/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-def download_from_gofile(photo_id, bearer, filename, filepath):
+def build_drive_download_url(photo_id: str) -> str:
     """
-    Get the real file link from GoFile API (guest token) and download it.
+    Converts a Google Drive file ID into a direct download URL.
+    """
+    return f"https://drive.google.com/uc?export=download&id={photo_id}"
+
+def download_from_drive(photo_id, photo_name):
+    """
+    Downloads a file from Google Drive using its file ID.
     """
     try:
-        api_url = f"https://api.gofile.io/getContent?contentId={photo_id}&token={bearer}"
-        resp = requests.get(api_url, timeout=30)
+        download_url = build_drive_download_url(photo_id)
+        save_path = os.path.join(IMAGE_FOLDER, f"{photo_name}.jpg")
 
-        try:
-            data = resp.json()
-        except Exception:
-            print(f"⚠️ GoFile API returned non-JSON for {photo_id}")
-            print("Response text was:\n", resp.text[:300])
-            return False
+        if os.path.exists(save_path):
+            print(f"✅ File already exists: {photo_name}.jpg")
+            return True
 
-        if data.get("status") == "ok":
-            contents = data["data"]["contents"]
-            if not contents:
-                print(f"⚠️ No files found for {photo_id}")
-                return False
+        print(f"⬇️ Downloading {photo_name} from Google Drive...")
+        resp = requests.get(download_url, timeout=30)
 
-            # Download ALL image files
-            for file_id, file_info in contents.items():
-                direct_url = file_info["link"]
-                real_name = file_info["name"]
-
-                # Only download image formats
-                if not real_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-                    continue
-
-                save_path = os.path.join(IMAGE_FOLDER, real_name)
-                if not os.path.exists(save_path):
-                    print(f"⬇️ Downloading {real_name} from {direct_url}...")
-                    img_resp = requests.get(direct_url, timeout=30)
-                    if img_resp.status_code == 200:
-                        with open(save_path, "wb") as f:
-                            f.write(img_resp.content)
-                    else:
-                        print(f"❌ Failed to download {real_name}, status {img_resp.status_code}")
+        if resp.status_code == 200 and resp.content.startswith(b'\xff\xd8'):  # JPEG check
+            with open(save_path, "wb") as f:
+                f.write(resp.content)
+            print(f"✅ Saved: {photo_name}.jpg")
+            return True
+        elif resp.status_code == 200:
+            # Still save non-JPG formats if response looks valid
+            with open(save_path, "wb") as f:
+                f.write(resp.content)
+            print(f"✅ Saved non-JPG: {photo_name}")
             return True
         else:
-            print(f"❌ GoFile API error for {photo_id}: {data}")
+            print(f"❌ Failed to download {photo_name}, status {resp.status_code}")
+            return False
+
     except Exception as e:
-        print("❌ Error in GoFile download:", e)
-    return False
+        print(f"❌ Error downloading {photo_name}: {e}")
+        return False
 
 def sync_images():
-    # Fetch all items from Redis list "images"
+    """
+    Sync images from Redis (Google Drive-based) to local folder.
+    """
     images_data = r.lrange("images", 0, -1)
     active_files = []
 
@@ -73,28 +70,34 @@ def sync_images():
             continue
 
         photo_id = data.get("photo_id")
-        bearer = data.get("photo_bearer")
-        status = data.get("status")
+        photo_name = data.get("photo_name", photo_id)
+        status = data.get("status", "inactive")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
 
-        if not photo_id or not bearer:
-            print("⚠️ Missing photo_id or bearer, skipping...")
+        # Skip if missing file ID
+        if not photo_id:
+            print("⚠️ Missing photo_id, skipping...")
             continue
 
+        # Optional scheduling control
+        today = datetime.now().date()
+        if start_date and end_date:
+            try:
+                start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                end = datetime.strptime(end_date, "%Y-%m-%d").date()
+                if not (start <= today <= end):
+                    print(f"📅 Skipping {photo_name}: out of date range.")
+                    continue
+            except:
+                pass
+
         if status == "active":
-            success = download_from_gofile(photo_id, bearer, photo_id, IMAGE_FOLDER)
+            success = download_from_drive(photo_id, photo_name)
             if success:
-                # Re-fetch file names from GoFile
-                api_url = f"https://api.gofile.io/getContent?contentId={photo_id}&token={bearer}"
-                resp = requests.get(api_url, timeout=30)
-                try:
-                    info = resp.json()
-                    if info.get("status") == "ok":
-                        for file_id, file_info in info["data"]["contents"].items():
-                            active_files.append(file_info["name"])
-                except:
-                    pass
+                active_files.append(f"{photo_name}.jpg")
         else:
-            print(f"🗑️ Skipping inactive entry {photo_id}")
+            print(f"🗑️ Skipping inactive entry {photo_name}")
 
     # Cleanup: remove local files not in active list
     for f in os.listdir(IMAGE_FOLDER):
