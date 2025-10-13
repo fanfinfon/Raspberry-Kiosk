@@ -2,7 +2,7 @@ import os
 import json
 import time
 import redis
-import imghdr
+from PIL import Image
 import requests
 from dotenv import load_dotenv
 
@@ -16,8 +16,7 @@ REDIS_URL = os.getenv("REDIS_URL")
 # Try to connect to Redis safely
 try:
     r = redis.from_url(REDIS_URL)
-    # simple connectivity test
-    r.ping()
+    r.ping()  # test connection
 except Exception as e:
     print(f"Could not connect to Redis: {e}")
     r = None
@@ -33,14 +32,14 @@ def build_drive_download_url(file_id):
 
 
 def is_valid_image(file_path):
-    """Check if the downloaded file appears to be a valid image."""
+    """Check if the downloaded file is a valid image using Pillow."""
     try:
         if not os.path.exists(file_path):
             return False
-        if os.path.getsize(file_path) < 1024:  # less than 1KB → likely invalid
+        if os.path.getsize(file_path) < 1024:
             return False
-        if imghdr.what(file_path) is None:
-            return False
+        with Image.open(file_path) as img:
+            img.verify()  # checks header
         return True
     except Exception:
         return False
@@ -62,7 +61,6 @@ def download_from_drive(photo_id, photo_name):
     for attempt in range(3):
         try:
             resp = requests.get(download_url, stream=True, timeout=(10, 20))
-
             if resp.status_code != 200:
                 print(f"Download failed for {photo_name}, status {resp.status_code}")
                 continue
@@ -73,10 +71,8 @@ def download_from_drive(photo_id, photo_name):
                     if chunk:
                         f.write(chunk)
 
-            # Move .tmp → final name atomically
-            os.replace(temp_path, save_path)
+            os.replace(temp_path, save_path)  # atomic rename
 
-            # Verify image integrity
             if not is_valid_image(save_path):
                 print(f"Invalid file detected, removing {photo_name}")
                 os.remove(save_path)
@@ -102,13 +98,13 @@ def download_from_drive(photo_id, photo_name):
 def sync_images():
     """
     Sync images from Redis to local folder.
-    Uses photo_name directly from Redis.
+    Expects a single JSON array stored under the 'images' key.
     """
     if not r:
         print("Redis connection not available. Aborting sync.")
         return
-    
-    # --- Cleanup leftover .tmp files from previous interrupted downloads ---
+
+    # --- Cleanup leftover .tmp files from interrupted downloads ---
     for f in os.listdir(IMAGE_FOLDER):
         if f.endswith(".tmp"):
             tmp_path = os.path.join(IMAGE_FOLDER, f)
@@ -118,21 +114,20 @@ def sync_images():
             except Exception as e:
                 print(f"Failed to remove temporary file {f}: {e}")
 
+    # --- Fetch and parse JSON data ---
     try:
-        images_data = r.lrange("images", 0, -1)
+        raw_data = r.get("images")
+        if not raw_data:
+            print("No data found in Redis.")
+            return
+        images_data = json.loads(raw_data)
     except Exception as e:
-        print(f"Failed to fetch data from Redis: {e}")
+        print(f"Failed to fetch or parse data from Redis: {e}")
         return
 
     active_files = []
 
-    for item in images_data:
-        try:
-            data = json.loads(item.decode())
-        except Exception as e:
-            print("Could not parse Redis item:", e)
-            continue
-
+    for data in images_data:
         photo_id = data.get("photo_id")
         photo_name = data.get("photo_name")
         status = data.get("status", "inactive")
@@ -147,7 +142,7 @@ def sync_images():
 
     # --- Cleanup old files ---
     for f in os.listdir(IMAGE_FOLDER):
-        if f not in active_files:
+        if f not in active_files and not f.endswith(".tmp"):
             print(f"Removing old file: {f}")
             os.remove(os.path.join(IMAGE_FOLDER, f))
 

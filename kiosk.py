@@ -41,7 +41,7 @@ running = True
 index = 0
 clock = pygame.time.Clock()
 image_time = 0
-delay = 15000  # 15 seconds per image
+delay = 5000  # 5 seconds per image
 
 while running:
     for event in pygame.event.get():
