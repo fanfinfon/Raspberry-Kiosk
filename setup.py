@@ -11,12 +11,12 @@ PYTHON = "/usr/bin/python3"
 def create_image_folder():
     if not os.path.exists(IMAGE_DIR):
         os.makedirs(IMAGE_DIR)
-        print(f"📁 Created folder: {IMAGE_DIR}")
+        print(f"Created folder: {IMAGE_DIR}")
     else:
-        print(f"📁 Folder already exists: {IMAGE_DIR}")
+        print(f"Folder already exists: {IMAGE_DIR}")
 
 def install_cronjob():
-    job = f"*/5 * * * * {PYTHON} {SYNC_SCRIPT}\n"
+    job = f"* * * * * {PYTHON} {SYNC_SCRIPT}\n"
 
     # Get current crontab for this user
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
@@ -27,18 +27,18 @@ def install_cronjob():
         new_cron = current_cron + job
         process = subprocess.run(["crontab"], input=new_cron, text=True)
         if process.returncode == 0:
-            print("✅ Cronjob installed (runs every 5 minutes).")
+            print("Cronjob installed (runs every 5 minutes).")
         else:
-            print("❌ Failed to install cronjob.")
+            print("Failed to install cronjob.")
     else:
-        print("ℹ️ Cronjob already exists.")
+        print("Cronjob already exists.")
 
 def run_first_sync():
-    print("🔄 Running first sync...")
+    print("Running first sync...")
     subprocess.run([PYTHON, SYNC_SCRIPT])
 
 def start_slideshow():
-    print("🎬 Starting slideshow (kiosk.py)...")
+    print("Starting slideshow (kiosk.py)...")
     # Run kiosk.py in background so setup.py doesn't block
     subprocess.Popen([PYTHON, KIOSK_SCRIPT])
 
@@ -46,5 +46,5 @@ if __name__ == "__main__":
     create_image_folder()
     install_cronjob()
     run_first_sync()
-    print("🎉 Setup complete!")
+    print("Setup complete!")
     start_slideshow()

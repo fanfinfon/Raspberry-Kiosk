@@ -1,109 +1,156 @@
 import os
-import requests
-import redis
 import json
+import time
+import redis
+import imghdr
+import requests
 from dotenv import load_dotenv
-from datetime import datetime
 
+
+# -------------------------
 # Load Redis URL
+# -------------------------
 load_dotenv()
 REDIS_URL = os.getenv("REDIS_URL")
-r = redis.from_url(REDIS_URL)
 
-# Local folder for images
+# Try to connect to Redis safely
+try:
+    r = redis.from_url(REDIS_URL)
+    # simple connectivity test
+    r.ping()
+except Exception as e:
+    print(f"Could not connect to Redis: {e}")
+    r = None
+
+# Local folder for saving images
 IMAGE_FOLDER = "/home/caglar/Desktop/Kiosk/images"
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
-def build_drive_download_url(photo_id: str) -> str:
-    """
-    Converts a Google Drive file ID into a direct download URL.
-    """
-    return f"https://drive.google.com/uc?export=download&id={photo_id}"
+
+def build_drive_download_url(file_id):
+    """Convert Google Drive file ID to direct public download link."""
+    return f"https://drive.google.com/uc?export=download&id={file_id}"
+
+
+def is_valid_image(file_path):
+    """Check if the downloaded file appears to be a valid image."""
+    try:
+        if not os.path.exists(file_path):
+            return False
+        if os.path.getsize(file_path) < 1024:  # less than 1KB → likely invalid
+            return False
+        if imghdr.what(file_path) is None:
+            return False
+        return True
+    except Exception:
+        return False
+
 
 def download_from_drive(photo_id, photo_name):
     """
-    Downloads a file from Google Drive using its file ID.
+    Download a public Google Drive file using the provided photo_name.
+    Includes retry logic, a 30-second timeout, and atomic (.tmp) saving.
     """
-    try:
-        download_url = build_drive_download_url(photo_id)
-        save_path = os.path.join(IMAGE_FOLDER, f"{photo_name}.jpg")
+    download_url = build_drive_download_url(photo_id)
+    save_path = os.path.join(IMAGE_FOLDER, photo_name)
+    temp_path = save_path + ".tmp"
 
-        if os.path.exists(save_path):
-            print(f"✅ File already exists: {photo_name}.jpg")
-            return True
+    # Skip if already exists
+    if os.path.exists(save_path):
+        return photo_name
 
-        print(f"⬇️ Downloading {photo_name} from Google Drive...")
-        resp = requests.get(download_url, timeout=30)
+    for attempt in range(3):
+        try:
+            resp = requests.get(download_url, stream=True, timeout=(10, 20))
 
-        if resp.status_code == 200 and resp.content.startswith(b'\xff\xd8'):  # JPEG check
-            with open(save_path, "wb") as f:
-                f.write(resp.content)
-            print(f"✅ Saved: {photo_name}.jpg")
-            return True
-        elif resp.status_code == 200:
-            # Still save non-JPG formats if response looks valid
-            with open(save_path, "wb") as f:
-                f.write(resp.content)
-            print(f"✅ Saved non-JPG: {photo_name}")
-            return True
+            if resp.status_code != 200:
+                print(f"Download failed for {photo_name}, status {resp.status_code}")
+                continue
+
+            print(f"Downloading {photo_name} (attempt {attempt+1})")
+            with open(temp_path, "wb") as f:
+                for chunk in resp.iter_content(8192):
+                    if chunk:
+                        f.write(chunk)
+
+            # Move .tmp → final name atomically
+            os.replace(temp_path, save_path)
+
+            # Verify image integrity
+            if not is_valid_image(save_path):
+                print(f"Invalid file detected, removing {photo_name}")
+                os.remove(save_path)
+                return None
+
+            print(f"Saved: {photo_name}")
+            return photo_name
+
+        except requests.exceptions.Timeout:
+            print(f"Timeout while downloading {photo_name} (attempt {attempt+1})")
+        except requests.exceptions.RequestException as e:
+            print(f"Network error while downloading {photo_name} (attempt {attempt+1}): {e}")
+        except Exception as e:
+            print(f"Unexpected error downloading {photo_name} (attempt {attempt+1}): {e}")
+
+        if attempt < 2:
+            time.sleep(3)
         else:
-            print(f"❌ Failed to download {photo_name}, status {resp.status_code}")
-            return False
+            print(f"Failed to download {photo_name} after 3 attempts")
+            return None
 
-    except Exception as e:
-        print(f"❌ Error downloading {photo_name}: {e}")
-        return False
 
 def sync_images():
     """
-    Sync images from Redis (Google Drive-based) to local folder.
+    Sync images from Redis to local folder.
+    Uses photo_name directly from Redis.
     """
-    images_data = r.lrange("images", 0, -1)
+    if not r:
+        print("Redis connection not available. Aborting sync.")
+        return
+    
+    # --- Cleanup leftover .tmp files from previous interrupted downloads ---
+    for f in os.listdir(IMAGE_FOLDER):
+        if f.endswith(".tmp"):
+            tmp_path = os.path.join(IMAGE_FOLDER, f)
+            try:
+                os.remove(tmp_path)
+                print(f"Removed leftover temporary file: {f}")
+            except Exception as e:
+                print(f"Failed to remove temporary file {f}: {e}")
+
+    try:
+        images_data = r.lrange("images", 0, -1)
+    except Exception as e:
+        print(f"Failed to fetch data from Redis: {e}")
+        return
+
     active_files = []
 
     for item in images_data:
         try:
             data = json.loads(item.decode())
         except Exception as e:
-            print("❌ Could not parse item:", e)
-            print("Raw data was:\n", item.decode())
+            print("Could not parse Redis item:", e)
             continue
 
         photo_id = data.get("photo_id")
-        photo_name = data.get("photo_name", photo_id)
+        photo_name = data.get("photo_name")
         status = data.get("status", "inactive")
-        start_date = data.get("start_date")
-        end_date = data.get("end_date")
 
-        # Skip if missing file ID
-        if not photo_id:
-            print("⚠️ Missing photo_id, skipping...")
+        if not photo_id or not photo_name:
             continue
 
-        # Optional scheduling control
-        today = datetime.now().date()
-        if start_date and end_date:
-            try:
-                start = datetime.strptime(start_date, "%Y-%m-%d").date()
-                end = datetime.strptime(end_date, "%Y-%m-%d").date()
-                if not (start <= today <= end):
-                    print(f"📅 Skipping {photo_name}: out of date range.")
-                    continue
-            except:
-                pass
-
         if status == "active":
-            success = download_from_drive(photo_id, photo_name)
-            if success:
-                active_files.append(f"{photo_name}.jpg")
-        else:
-            print(f"🗑️ Skipping inactive entry {photo_name}")
+            file_name = download_from_drive(photo_id, photo_name)
+            if file_name:
+                active_files.append(file_name)
 
-    # Cleanup: remove local files not in active list
+    # --- Cleanup old files ---
     for f in os.listdir(IMAGE_FOLDER):
         if f not in active_files:
-            print(f"🗑️ Cleaning up old file {f}")
+            print(f"Removing old file: {f}")
             os.remove(os.path.join(IMAGE_FOLDER, f))
+
 
 if __name__ == "__main__":
     sync_images()

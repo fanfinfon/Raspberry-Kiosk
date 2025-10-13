@@ -10,7 +10,7 @@ image_folder = "/home/caglar/Desktop/Kiosk/images"
 
 def load_images():
     return [os.path.join(image_folder, f) for f in os.listdir(image_folder) 
-            if f.endswith((".png", ".jpg", ".jpeg", ".webp"))]
+            if f.endswith((".png", ".jpg", ".jpeg", ".webp",".png",".heic"))]
 
 images = load_images()
 running = True
@@ -26,8 +26,6 @@ while running:
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE or event.key == pygame.K_q:
                 running = False
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            running = False
 
     # Reload image list in case sync script updated files
     if index == 0:
