@@ -116,7 +116,7 @@ def sync_images():
 
     # --- Fetch and parse JSON data ---
     try:
-        raw_data = r.get("images")
+        raw_data = r.execute_command("JSON.GET", "images")
         if not raw_data:
             print("No data found in Redis.")
             return
@@ -124,6 +124,7 @@ def sync_images():
     except Exception as e:
         print(f"Failed to fetch or parse data from Redis: {e}")
         return
+
 
     active_files = []
 
