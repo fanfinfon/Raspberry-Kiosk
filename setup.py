@@ -16,7 +16,7 @@ def create_image_folder():
         print(f"Folder already exists: {IMAGE_DIR}")
 
 def install_cronjob():
-    job = f"* * * * * {PYTHON} {SYNC_SCRIPT}\n"
+    job = f"* * * * * {PYTHON} {SYNC_SCRIPT} >> {PROJECT_DIR}/sync.log 2>&1\n"
 
     # Get current crontab for this user
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
@@ -27,7 +27,7 @@ def install_cronjob():
         new_cron = current_cron + job
         process = subprocess.run(["crontab"], input=new_cron, text=True)
         if process.returncode == 0:
-            print("Cronjob installed (runs every 5 minutes).")
+            print("Cronjob installed (runs every minutes).")
         else:
             print("Failed to install cronjob.")
     else:
